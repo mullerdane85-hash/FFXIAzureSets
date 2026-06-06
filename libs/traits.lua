@@ -18,6 +18,13 @@
 
 local trait_db = require('libs/trait_db')
 
+-- Supplemental set-points lookup -- fills in the 19 BLU spells whose
+-- blu_info.lua entries don't have a point_cost field. Lazy-loaded since
+-- the file is small (one require call's worth of work) and doesn't
+-- depend on anything else.
+local supplemental_setpoints_ok, supplemental_setpoints = pcall(require, 'libs/blu_set_points')
+if not supplemental_setpoints_ok then supplemental_setpoints = {} end
+
 local traits = {}
 
 -- -----------------------------------------------------------------------------
@@ -77,7 +84,13 @@ function traits.spell_info(spell_name)
 
     -- Even when blu_info isn't installed, we still want to return a usable
     -- entry shape so the Spell Info column has SOMETHING to display.
-    if not entry and not contribs then return nil end
+    if not entry and not contribs then
+        -- Last-ditch: maybe the supplemental setpoints table has it; that
+        -- still gives the tooltip a "Set Pts: N" line.
+        local sp = supplemental_setpoints[spell_name] or supplemental_setpoints[title]
+        if sp then return { point_cost = tostring(sp) } end
+        return nil
+    end
 
     -- Shallow copy of the blu_info entry (if any) so we don't mutate the
     -- shared module-level table.
@@ -86,6 +99,15 @@ function traits.spell_info(spell_name)
 
     if contribs and #contribs > 0 then
         merged.contributions = contribs   -- UI walks this for the "Contributes" block
+    end
+
+    -- Supplemental setpoints fallback: if blu_info didn't include
+    -- point_cost for this spell, fill it from the bundled table so the
+    -- tooltip's "Set Pts: N" line shows up consistently across all 198
+    -- BLU spells.
+    if not merged.point_cost or merged.point_cost == '' then
+        local sp = supplemental_setpoints[spell_name] or supplemental_setpoints[title]
+        if sp then merged.point_cost = tostring(sp) end
     end
 
     return merged
