@@ -355,12 +355,23 @@ function spell_core.create_empty_set(setname)
     return true, "Created empty set '"..setname.."'."
 end
 
--- Return a sorted list of every BLU spell name (English, Title-Case) for
--- the picker to render. Cheap; ~120 entries.
+-- Return a sorted list of every LEARNED BLU spell name (English, Title-Case)
+-- for the picker to render. No point showing spells the user hasn't learned --
+-- they'd just be dead options that produce silent equip failures.
+--
+-- Windower's get_spells() returns a spell_id -> true map. Cross-referenced
+-- with res.spells:type('BlueMagic') to drop non-BLU IDs and pick up the
+-- canonical English name in one pass.
 function spell_core.list_all_blu_spells()
     local out = {}
     if not blu_spells then return out end
-    for spell in blu_spells:it() do out[#out + 1] = spell.english end
+    local learned = (windower and windower.ffxi and windower.ffxi.get_spells
+                     and windower.ffxi.get_spells()) or {}
+    for spell in blu_spells:it() do
+        if learned[spell.id] then
+            out[#out + 1] = spell.english
+        end
+    end
     table.sort(out, function(a, b) return a:lower() < b:lower() end)
     return out
 end
