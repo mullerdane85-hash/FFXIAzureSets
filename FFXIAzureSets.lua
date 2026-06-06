@@ -252,8 +252,8 @@ local function initialize()
 
     ui.set_callbacks({
         on_save_current = function()
-            if not spell_core.is_blue_mage_main() then
-                ui.set_status('Not BLU main -- can\'t read your current spells.')
+            if not spell_core.is_blue_mage() then
+                ui.set_status('BLU not active -- switch to BLU on main or sub first.')
                 return
             end
             -- Prefill the FFXI chat input with the command so the user just
@@ -264,8 +264,8 @@ local function initialize()
         end,
 
         on_remove_all = function()
-            if not spell_core.is_blue_mage_main() then
-                ui.set_status('Not BLU main.')
+            if not spell_core.is_blue_mage() then
+                ui.set_status('BLU not active.')
                 return
             end
             spell_core.remove_all_spells()
@@ -307,16 +307,29 @@ local function initialize()
 
         on_equip_set = function(name)
             if not name then return end
-            if not spell_core.is_blue_mage_main() then
-                ui.set_status('Switch to Blue Mage main first.')
+            if not spell_core.is_blue_mage() then
+                ui.set_status('BLU not active -- switch to BLU on main or sub first.')
                 return
+            end
+            -- Pre-equip cap check. FFXI itself will refuse spells past
+            -- the cap, but warning upfront is friendlier than watching
+            -- silently-dropped slots in the scheduled set+remove phase.
+            local set       = spell_core.get_set(name) or {}
+            local set_pts   = traits_lib.total_set_points(set)
+            local cap_pts   = traits_lib.max_cap_for_player(settings.bonus_set_points)
+            if cap_pts > 0 and set_pts > cap_pts then
+                local over = set_pts - cap_pts
+                local warn = ('Set "%s" needs %d pts but your cap is %d (over by %d). FFXI will drop the excess spells.')
+                    :format(name, set_pts, cap_pts, over)
+                ui.set_status('Over cap by ' .. over .. ' pts -- equip will drop spells.')
+                windower.add_to_chat(167, 'FFXIAzureSets: ' .. warn)
+                -- Fall through and still attempt; user might be intentional
+                -- (e.g. they swap to higher-level BLU later or have unsaved
+                -- merits). FFXI's own error per-slot is the hard gate.
             end
             local ok, msg = spell_core.set_spells(name, settings.setmode)
             ui.set_status(msg or (ok and ('Equipping '..name) or 'Equip failed'))
             windower.add_to_chat(ok and 207 or 167, 'FFXIAzureSets: '..(msg or ''))
-            -- Refresh shortly after so the UI catches the new live state once
-            -- the scheduled set-phase finishes. 21 slots * 0.65s worst case ~14s;
-            -- a couple of mid-process refreshes keep the live view fresh.
             refresh_ui_data()
         end,
 
@@ -378,7 +391,7 @@ windower.register_event('job change', function(job)
         refresh_ui_data()
     else
         -- Off-job: still keep the UI usable for viewing saved sets, but the
-        -- Save / Remove / Load actions will short-circuit on is_blue_mage_main.
+        -- Save / Remove / Load actions will short-circuit if BLU isn't active.
         refresh_ui_data()
     end
 end)
@@ -583,8 +596,8 @@ windower.register_event('addon command', function(...)
         return
     end
 
-    -- Everything else routes through spell_core. is_blue_mage_main is the
-    -- one gate that applies to most verbs; UI viewing is allowed off-job.
+    -- Everything else routes through spell_core. The "is BLU active" gate
+    -- (main OR sub) applies to most verbs; UI viewing is allowed off-job.
     if cmd == 'setlist' then
         local sets = spell_core.list_sets()
         windower.add_to_chat(207, 'FFXIAzureSets: '..#sets..' saved set(s):')
@@ -616,9 +629,9 @@ windower.register_event('addon command', function(...)
         return
     end
 
-    -- Verbs below require BLU main. Gate once.
-    if not spell_core.is_blue_mage_main() then
-        windower.add_to_chat(167, 'FFXIAzureSets: switch to Blue Mage main first.')
+    -- Verbs below require BLU to be active (main OR sub). Gate once.
+    if not spell_core.is_blue_mage() then
+        windower.add_to_chat(167, 'FFXIAzureSets: BLU not active -- switch to BLU on main or sub first.')
         return
     end
 

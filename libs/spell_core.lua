@@ -69,9 +69,16 @@ function spell_core.initialize(settings_handle)
     blu_spells = res.spells:type('BlueMagic')
 end
 
--- True when the player is currently a Blue Mage main. The original addon
--- gated every command on this; we expose it so the UI can disable buttons
--- (or pop a status) instead of silently failing.
+-- True when the player has BLU active in EITHER slot (main or sub).
+-- The original addon gated commands on main-only, but in retail FFXI a
+-- /BLU sub can set spells too -- they're just capped at the sub-job's
+-- set-points table (and Assimilation merits + BLU JP gifts don't apply).
+function spell_core.is_blue_mage()
+    local p = windower.ffxi.get_player()
+    return p and (p.main_job_id == 16 or p.sub_job_id == 16)
+end
+
+-- Kept for backwards compat in case anything external called it.
 function spell_core.is_blue_mage_main()
     local p = windower.ffxi.get_player()
     return p and p.main_job_id == 16
@@ -85,7 +92,9 @@ end
 -- currently set on the character. Returns nil off-job. Lowercase names so
 -- set comparisons via contains() work without case fiddling.
 function spell_core.get_current_spellset()
-    if not spell_core.is_blue_mage_main() then return nil end
+    -- get_mjob_data() returns the spell array regardless of main vs sub
+    -- on retail FFXI, so we just need BLU to be active in either slot.
+    if not spell_core.is_blue_mage() then return nil end
     return T(windower.ffxi.get_mjob_data().spells)
         -- 512 is the sentinel for "slot empty". Strip it before mapping.
         :filter(function(id) return id ~= 512 end)
@@ -122,7 +131,7 @@ end
 
 -- Single-shot equip of one spell into one slot. Slot is 1-20.
 function spell_core.set_single_spell(spell_name, slot)
-    if not spell_core.is_blue_mage_main() then return false, 'Not BLU main' end
+    if not spell_core.is_blue_mage() then return false, 'BLU not active (main or sub).' end
     if not spell_name or not slot then return false, 'Missing args' end
 
     local id = spell_core.find_spell_id_by_name(spell_name)
@@ -205,8 +214,8 @@ end
 -- Public entry. set_mode is 'PreserveTraits' or 'ClearFirst' (case-insensitive).
 -- Returns (ok, message) so the UI can show success / a status line.
 function spell_core.set_spells(spellset_name, set_mode)
-    if not spell_core.is_blue_mage_main() then
-        return false, 'Main job not Blue Mage.'
+    if not spell_core.is_blue_mage() then
+        return false, 'BLU not active (main or sub).'
     end
     if not settings.spellsets[spellset_name] then
         return false, 'Set not defined: '..tostring(spellset_name)
