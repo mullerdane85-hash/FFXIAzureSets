@@ -1323,8 +1323,43 @@ function ui.handle_mouse(mtype, x, y)
             end
             for _, r in ipairs(state.rects.pick_rows or {}) do
                 if inside(r, x, y) then
-                    state.callbacks.on_assign_slot(state.selected_set_name, state.picker.slot_num, r.spell)
-                    close_picker()
+                    -- Auto-advance: after assigning the spell, look for the
+                    -- next empty slot starting at slot_num + 1 (wrapping
+                    -- around through slot 1 if we hit slot 20). If found,
+                    -- reopen the picker on that slot with the SAME filter
+                    -- and scroll state so the user can rapid-fire pick
+                    -- spells from one filtered list. Only closes when the
+                    -- set is full.
+                    local prior_filter = state.picker.filter
+                    local prior_scroll = state.picker.scroll
+                    local prior_slot   = state.picker.slot_num
+                    state.callbacks.on_assign_slot(state.selected_set_name, prior_slot, r.spell)
+                    -- on_assign_slot calls ui.view_set which nils state.picker
+                    -- and refreshes data. Read the freshly-updated spellset
+                    -- to find the next empty slot.
+                    local set = state.data.selected_spellset or {}
+                    local function slot_key(i) return ('slot%02u'):format(i) end
+                    local next_slot
+                    for i = prior_slot + 1, 20 do
+                        if not set[slot_key(i)] then next_slot = i; break end
+                    end
+                    if not next_slot then
+                        for i = 1, prior_slot - 1 do
+                            if not set[slot_key(i)] then next_slot = i; break end
+                        end
+                    end
+                    if next_slot then
+                        state.picker = {
+                            slot_num = next_slot,
+                            current_spell = set[slot_key(next_slot)],
+                            scroll = prior_scroll,
+                            filter = prior_filter,
+                            hovered_spell = nil,
+                        }
+                        ui.render()
+                    else
+                        close_picker()
+                    end
                     return true
                 end
             end
