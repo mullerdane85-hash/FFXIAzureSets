@@ -234,10 +234,16 @@ function spell_core._set_phase_step(spellset_name, set_phase, attempt)
     end
 
     if empty_slot then
+        -- Skip spells the player hasn't learned -- the game silently
+        -- rejects them, which without this check meant the loop kept
+        -- retrying the same unlearned spell forever until the iteration
+        -- cap fired. By filtering here, an unlearned spell in the saved
+        -- set just gets skipped over and we move on to the next target.
+        local learned = (windower.ffxi.get_spells and windower.ffxi.get_spells()) or {}
         for _, target_spell in pairs(target_set) do
             if not current_set:contains(target_spell:lower()) then
                 local id = spell_core.find_spell_id_by_name(target_spell)
-                if id then
+                if id and learned[id] then
                     windower.ffxi.set_blue_magic_spell(id, empty_slot)
                     spell_core._set_phase_step:schedule(settings.setspeed,
                         spellset_name, 'add', attempt)
@@ -264,6 +270,28 @@ function spell_core.set_spells(spellset_name, set_mode)
     if not settings.spellsets[spellset_name] then
         return false, 'Set not defined: '..tostring(spellset_name)
     end
+    -- Pre-check: count how many spells in the saved set the player
+    -- hasn't learned. We don't refuse to equip (the equip loop already
+    -- skips them) but we DO chat-warn upfront so the user understands
+    -- why a 6-spell set might land only 4 spells on the bar.
+    do
+        local learned = (windower.ffxi.get_spells and windower.ffxi.get_spells()) or {}
+        local missing = {}
+        for _, spell in pairs(settings.spellsets[spellset_name]) do
+            if type(spell) == 'string' then
+                local id = spell_core.find_spell_id_by_name(spell)
+                if id and not learned[id] then
+                    missing[#missing + 1] = spell
+                end
+            end
+        end
+        if #missing > 0 then
+            windower.add_to_chat(167, ('FFXIAzureSets: %s has %d unlearned spell%s -- they will be skipped: %s')
+                :format(spellset_name, #missing, #missing == 1 and '' or 's',
+                        table.concat(missing, ', ')))
+        end
+    end
+
     if spell_core.is_spellset_equipped(settings.spellsets[spellset_name]) then
         return true, spellset_name..' already equipped.'
     end
