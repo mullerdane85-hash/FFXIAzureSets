@@ -234,20 +234,19 @@ function spell_core._set_phase_step(spellset_name, set_phase, attempt)
     end
 
     if empty_slot then
-        -- Skip spells the player hasn't learned -- the game silently
-        -- rejects them, which without this check meant the loop kept
-        -- retrying the same unlearned spell forever until the iteration
-        -- cap fired. By filtering here, an unlearned spell in the saved
-        -- set just gets skipped over and we move on to the next target.
         local learned = (windower.ffxi.get_spells and windower.ffxi.get_spells()) or {}
         for _, target_spell in pairs(target_set) do
             if not current_set:contains(target_spell:lower()) then
                 local id = spell_core.find_spell_id_by_name(target_spell)
                 if id and learned[id] then
+                    windower.add_to_chat(160, ('FFXIAzureSets dbg: set %s (id=%d) -> slot %d')
+                        :format(target_spell, id, empty_slot))
                     windower.ffxi.set_blue_magic_spell(id, empty_slot)
                     spell_core._set_phase_step:schedule(settings.setspeed,
                         spellset_name, 'add', attempt)
                     return
+                elseif id and not learned[id] then
+                    -- Skip unlearned -- chat-warned at set_spells entry
                 end
             end
         end
@@ -296,9 +295,16 @@ function spell_core.set_spells(spellset_name, set_mode)
         return true, spellset_name..' already equipped.'
     end
 
-    set_mode = (set_mode or settings.setmode or 'PreserveTraits'):lower()
+    set_mode = (set_mode or settings.setmode or 'ClearFirst'):lower()
     if set_mode == 'clearfirst' then
+        -- Belt-and-suspenders clear: call the Windower API AND send
+        -- azureSets's own removeall command (if azureSets is installed
+        -- it'll process this and also clear, which covers builds where
+        -- reset_blue_magic_spells silently no-ops for some reason). The
+        -- two paths are idempotent so doubling up is harmless.
+        windower.add_to_chat(207, 'FFXIAzureSets: clearing all set spells...')
         spell_core.remove_all_spells()
+        windower.send_command('aset removeall')
         spell_core._set_phase_step:schedule(settings.setspeed, spellset_name, 'add')
         return true, 'Equipping '..spellset_name..' (clear-first)...'
     elseif set_mode == 'preservetraits' then
