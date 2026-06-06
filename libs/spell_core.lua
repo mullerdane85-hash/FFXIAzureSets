@@ -92,10 +92,19 @@ end
 -- currently set on the character. Returns nil off-job. Lowercase names so
 -- set comparisons via contains() work without case fiddling.
 function spell_core.get_current_spellset()
-    -- get_mjob_data() returns the spell array regardless of main vs sub
-    -- on retail FFXI, so we just need BLU to be active in either slot.
     if not spell_core.is_blue_mage() then return nil end
-    return T(windower.ffxi.get_mjob_data().spells)
+    -- BLU on main -> get_mjob_data(). BLU on sub -> get_sjob_data().
+    -- Earlier this used mjob unconditionally, which meant /BLU subs got
+    -- the wrong job's spell array (and an empty BLU slot list).
+    local p = windower.ffxi.get_player()
+    local data
+    if p and p.main_job_id == 16 then
+        data = windower.ffxi.get_mjob_data()
+    else
+        data = windower.ffxi.get_sjob_data and windower.ffxi.get_sjob_data() or nil
+    end
+    if not data or not data.spells then return T{} end
+    return T(data.spells)
         -- 512 is the sentinel for "slot empty". Strip it before mapping.
         :filter(function(id) return id ~= 512 end)
         :map(function(id) return blu_spells[id].english:lower() end)
@@ -155,9 +164,16 @@ end
 -- Bulk spellset equipping (PreserveTraits and ClearFirst paths)
 -- =============================================================================
 
--- Internal helper. Recursively schedules itself on settings.setspeed until
--- the live spellset matches the saved one. setPhase rotates remove -> add.
--- This is verbatim the strategy from the original azureSets author:
+-- Optional callback for the UI to update its status when an equip finishes.
+-- Signature: on_equip_done(ok: bool, spellset_name: string, message: string).
+local on_equip_done = nil
+function spell_core.set_equip_done_handler(fn) on_equip_done = fn end
+
+-- Internal helper. Lives on the spell_core table (not as a local) so that
+-- :schedule reliably resumes -- the function value has a stable identity
+-- the scheduler can hold onto.
+--
+-- Strategy ported from azureSets (Ricky Gall / Nitrous):
 --   1. In 'remove' phase, find the first live spell NOT in the target set
 --      and call remove on it. Schedule the next pass.
 --   2. Once remove phase has nothing left to remove, fall through to add
@@ -166,17 +182,39 @@ end
 -- The 0.65s delay (configurable via settings.setspeed) gives the server a
 -- moment to ack each packet -- sending faster causes the game to drop set
 -- attempts on the floor.
-local function set_phase_step(spellset_name, set_phase)
+--
+-- Stall detection (new): if a scheduled step computes the same live spellset
+-- as the previous step, no packet was honored (over cap, unlearned spell,
+-- etc.). Exit with a friendly message instead of looping forever.
+function spell_core._set_phase_step(spellset_name, set_phase, prev_state_key)
     local target_set  = settings.spellsets[spellset_name]
     local current_set = spell_core.get_current_spellset()
-    if not current_set then return end
+    if not current_set then
+        if on_equip_done then on_equip_done(false, spellset_name, 'BLU went off-job') end
+        return
+    end
+
+    -- Compute a stable state key for stall detection.
+    local key_parts = {}
+    for i = 1, 20 do
+        local sk = ('slot%02u'):format(i)
+        key_parts[#key_parts + 1] = current_set[sk] or '_'
+    end
+    local state_key = table.concat(key_parts, '|')
+    if prev_state_key and prev_state_key == state_key then
+        local msg = spellset_name..' equip stalled (over cap or unlearned spells dropped).'
+        windower.add_to_chat(207, 'FFXIAzureSets: '..msg)
+        if on_equip_done then on_equip_done(false, spellset_name, msg) end
+        return
+    end
 
     if set_phase == 'remove' then
         for slot_key, live_spell in pairs(current_set) do
             if not target_set:contains(live_spell:lower()) then
                 local slot_num = tonumber(slot_key:sub(5, slot_key:len()))
                 windower.ffxi.remove_blue_magic_spell(slot_num)
-                set_phase_step:schedule(settings.setspeed, spellset_name, 'remove')
+                spell_core._set_phase_step:schedule(settings.setspeed,
+                    spellset_name, 'remove', state_key)
                 return
             end
         end
@@ -197,18 +235,20 @@ local function set_phase_step(spellset_name, set_phase)
                 local id = spell_core.find_spell_id_by_name(target_spell)
                 if id then
                     windower.ffxi.set_blue_magic_spell(id, empty_slot)
-                    set_phase_step:schedule(settings.setspeed, spellset_name, 'add')
+                    spell_core._set_phase_step:schedule(settings.setspeed,
+                        spellset_name, 'add', state_key)
                     return
                 end
             end
         end
     end
 
-    -- Nothing left to set -> finished. The original kicked off a 60s cooldown
-    -- timer here; preserve it so the existing Blue Magic Cooldown timer keeps
-    -- ticking for users who rely on it.
-    windower.add_to_chat(207, 'FFXIAzureSets: '..spellset_name..' equipped.')
+    -- Nothing left to set -> finished. Cooldown timer preserved from the
+    -- original azureSets behavior.
+    local msg = spellset_name..' equipped.'
+    windower.add_to_chat(207, 'FFXIAzureSets: '..msg)
     windower.send_command('@timers c "Blue Magic Cooldown" 60 up')
+    if on_equip_done then on_equip_done(true, spellset_name, msg) end
 end
 
 -- Public entry. set_mode is 'PreserveTraits' or 'ClearFirst' (case-insensitive).
@@ -227,10 +267,10 @@ function spell_core.set_spells(spellset_name, set_mode)
     set_mode = (set_mode or settings.setmode or 'PreserveTraits'):lower()
     if set_mode == 'clearfirst' then
         spell_core.remove_all_spells()
-        set_phase_step:schedule(settings.setspeed, spellset_name, 'add')
+        spell_core._set_phase_step:schedule(settings.setspeed, spellset_name, 'add')
         return true, 'Equipping '..spellset_name..' (clear-first)...'
     elseif set_mode == 'preservetraits' then
-        set_phase_step(spellset_name, 'remove')
+        spell_core._set_phase_step(spellset_name, 'remove')
         return true, 'Equipping '..spellset_name..' (preserve traits)...'
     end
 

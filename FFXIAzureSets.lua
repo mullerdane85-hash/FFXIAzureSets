@@ -242,6 +242,16 @@ end
 
 local function initialize()
     spell_core.initialize(settings)
+    -- Wire the equip-complete callback so the UI status updates when
+    -- a scheduled set+remove finishes (or stalls). Without this the
+    -- status stays at "Equipping..." indefinitely even after the chat
+    -- "equipped" line fires.
+    spell_core.set_equip_done_handler(function(ok, setname, msg)
+        if ui.set_status then
+            ui.set_status(ok and ('Equipped '..setname..'.') or ('Equip stalled: '..(msg or '')))
+        end
+        refresh_ui_data()
+    end)
     -- Position from settings so the panel remembers where you put it.
     ui.set_position(settings.pos.x or 200, settings.pos.y or 200)
     ui.set_position_persistor(function(x, y)
