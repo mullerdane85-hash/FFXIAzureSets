@@ -55,7 +55,11 @@ local ui         = require('libs/ui')
 -- the original azureSets long enough to populate it, then copy). The 'default'
 -- sentinel and the two VW presets are kept for parity with the upstream addon.
 local defaults = {}
-defaults.setmode   = 'PreserveTraits'
+-- ClearFirst by default: removes every set spell, then sets the target
+-- loadout from scratch. PreserveTraits is faster but invisible when the
+-- live state already looks close to the target, which made users think
+-- "Equip Spell Set" wasn't doing anything. ClearFirst shows progress.
+defaults.setmode   = 'ClearFirst'
 defaults.setspeed  = 0.65
 defaults.toggle_key = 'Z'
 defaults.pos       = { x = 200, y = 200 }
@@ -337,7 +341,11 @@ local function initialize()
                 -- (e.g. they swap to higher-level BLU later or have unsaved
                 -- merits). FFXI's own error per-slot is the hard gate.
             end
-            local ok, msg = spell_core.set_spells(name, settings.setmode)
+            -- Force ClearFirst regardless of stored setmode so the user
+            -- always sees the visible "wipe + repopulate" progression.
+            -- The settings.setmode default is also ClearFirst now, but
+            -- legacy installs may have PreserveTraits persisted.
+            local ok, msg = spell_core.set_spells(name, 'ClearFirst')
             ui.set_status(msg or (ok and ('Equipping '..name) or 'Equip failed'))
             windower.add_to_chat(ok and 207 or 167, 'FFXIAzureSets: '..(msg or ''))
             refresh_ui_data()
