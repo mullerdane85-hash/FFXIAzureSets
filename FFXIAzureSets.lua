@@ -325,21 +325,20 @@ local function initialize()
                 ui.set_status('BLU not active -- switch to BLU on main or sub first.')
                 return
             end
-            -- Pre-equip cap check. FFXI itself will refuse spells past
-            -- the cap, but warning upfront is friendlier than watching
-            -- silently-dropped slots in the scheduled set+remove phase.
+            -- Pre-equip cap check. REFUSE to equip when over cap -- FFXI
+            -- would silently drop the excess spells, which results in a
+            -- partial loadout the user didn't intend. Better to bail
+            -- upfront with a clear "trim the set first" message.
             local set       = spell_core.get_set(name) or {}
             local set_pts   = traits_lib.total_set_points(set)
             local cap_pts   = traits_lib.max_cap_for_player(settings.bonus_set_points)
             if cap_pts > 0 and set_pts > cap_pts then
                 local over = set_pts - cap_pts
-                local warn = ('Set "%s" needs %d pts but your cap is %d (over by %d). FFXI will drop the excess spells.')
+                local msg = ('Set "%s" needs %d pts but your cap is %d (over by %d). Please remove a spell from the set before equipping.')
                     :format(name, set_pts, cap_pts, over)
-                ui.set_status('Over cap by ' .. over .. ' pts -- equip will drop spells.')
-                windower.add_to_chat(167, 'FFXIAzureSets: ' .. warn)
-                -- Fall through and still attempt; user might be intentional
-                -- (e.g. they swap to higher-level BLU later or have unsaved
-                -- merits). FFXI's own error per-slot is the hard gate.
+                ui.set_status(('Over cap by %d pts -- remove a spell to equip.'):format(over))
+                windower.add_to_chat(167, 'FFXIAzureSets: ' .. msg)
+                return   -- Block the equip entirely.
             end
             -- Force ClearFirst regardless of stored setmode so the user
             -- always sees the visible "wipe + repopulate" progression.
