@@ -186,7 +186,14 @@ function spell_core.set_equip_done_handler(fn) on_equip_done = fn end
 -- Stall detection (new): if a scheduled step computes the same live spellset
 -- as the previous step, no packet was honored (over cap, unlearned spell,
 -- etc.). Exit with a friendly message instead of looping forever.
-function spell_core._set_phase_step(spellset_name, set_phase, prev_state_key)
+-- Allow several consecutive "no-progress" iterations before declaring a
+-- stall. Windower's get_mjob_data().spells cache can lag a beat or two
+-- behind set_blue_magic_spell, so a single matching state_key isn't
+-- enough evidence that the equip is actually stuck.
+local STALL_GRACE = 6   -- ~6 * 0.65s = ~4s of no observed change
+
+function spell_core._set_phase_step(spellset_name, set_phase, prev_state_key, no_progress_count)
+    no_progress_count = no_progress_count or 0
     local target_set  = settings.spellsets[spellset_name]
     local current_set = spell_core.get_current_spellset()
     if not current_set then
@@ -201,11 +208,21 @@ function spell_core._set_phase_step(spellset_name, set_phase, prev_state_key)
         key_parts[#key_parts + 1] = current_set[sk] or '_'
     end
     local state_key = table.concat(key_parts, '|')
+
+    -- Stall check: only fires after STALL_GRACE consecutive identical
+    -- observations. Cache-update lag is normal; persistent no-change for
+    -- multiple seconds is the real stall signal (over cap, unlearned
+    -- spell, BLU dropped from job, etc.).
     if prev_state_key and prev_state_key == state_key then
-        local msg = spellset_name..' equip stalled (over cap or unlearned spells dropped).'
-        windower.add_to_chat(207, 'FFXIAzureSets: '..msg)
-        if on_equip_done then on_equip_done(false, spellset_name, msg) end
-        return
+        no_progress_count = no_progress_count + 1
+        if no_progress_count >= STALL_GRACE then
+            local msg = spellset_name..' equip stalled (over cap or unlearned spells dropped).'
+            windower.add_to_chat(207, 'FFXIAzureSets: '..msg)
+            if on_equip_done then on_equip_done(false, spellset_name, msg) end
+            return
+        end
+    else
+        no_progress_count = 0
     end
 
     if set_phase == 'remove' then
@@ -214,7 +231,7 @@ function spell_core._set_phase_step(spellset_name, set_phase, prev_state_key)
                 local slot_num = tonumber(slot_key:sub(5, slot_key:len()))
                 windower.ffxi.remove_blue_magic_spell(slot_num)
                 spell_core._set_phase_step:schedule(settings.setspeed,
-                    spellset_name, 'remove', state_key)
+                    spellset_name, 'remove', state_key, no_progress_count)
                 return
             end
         end
@@ -236,7 +253,7 @@ function spell_core._set_phase_step(spellset_name, set_phase, prev_state_key)
                 if id then
                     windower.ffxi.set_blue_magic_spell(id, empty_slot)
                     spell_core._set_phase_step:schedule(settings.setspeed,
-                        spellset_name, 'add', state_key)
+                        spellset_name, 'add', state_key, no_progress_count)
                     return
                 end
             end
