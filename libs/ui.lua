@@ -1213,17 +1213,17 @@ function ui.handle_mouse(mtype, x, y)
                 end
             end
             if not inside(state.rects.dropdown_bounds, x, y) then
-                local anchor = state.dropdown.anchor_rect
+                -- Outside-click: close the dropdown AND swallow the
+                -- click. Previously this fell through to the handler
+                -- below for a "dismiss + action in one click" UX, but
+                -- in the picker that meant clicking off the filter
+                -- accidentally selected the spell row beneath it. The
+                -- safer rule: closing a menu doesn't double as an
+                -- action. User clicks once more to do whatever they
+                -- wanted next.
                 state.dropdown = nil
                 ui.render()
-                if anchor and inside(anchor, x, y) then
-                    -- Click on the anchor -> swallow, because the anchor's
-                    -- own handler would just reopen us.
-                    return true
-                end
-                -- Otherwise fall through so the click below also processes
-                -- (e.g. user clicked an action button while dropdown was
-                -- open: close dropdown AND trigger the button).
+                return true
             end
         elseif mtype == 0 or mtype == 2 then
             -- Pass move/up events through so dragging isn't blocked.
