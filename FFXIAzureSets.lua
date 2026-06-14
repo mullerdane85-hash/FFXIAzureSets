@@ -60,8 +60,20 @@ local defaults = {}
 -- live state already looks close to the target, which made users think
 -- "Equip Spell Set" wasn't doing anything. ClearFirst shows progress.
 defaults.setmode   = 'ClearFirst'
-defaults.setspeed  = 0.65
-defaults.toggle_key = 'Z'
+-- Delay between set_blue_magic_spell packets in seconds. The bottleneck
+-- isn't the SEND rate but how long Windower's get_mjob_data().spells
+-- cache takes to reflect the server-side update -- if we re-query it too
+-- soon, the spell looks "not set" and the loop retries (visible as the
+-- "[retry 1]" tag in the dbg lines). 0.65 was the original azureSets
+-- value but it leaves cache-lag retries on most spells in practice;
+-- 1.0 eliminates almost all of them on retail-latency connections.
+-- User can tune lower with //faset setspeed N if their cache is faster.
+defaults.setspeed  = 1.0
+defaults.toggle_key = 'Z'        -- legacy bare-key bind (use modifier hotkey instead)
+-- Modifier-based toggle hotkey (Windower bind respects chat-open).
+-- Default Alt+B (Blue). //faset hotkey ... to rebind.
+defaults.hotkey_modifier = 'alt'
+defaults.hotkey_key      = 'b'
 defaults.pos       = { x = 200, y = 200 }
 -- Manual override for the BLU set-points cap bonus (above the level base).
 -- Set via //faset setbonus N. 0 means "use auto-detection" (which tries
@@ -267,7 +279,7 @@ local function initialize()
     ui.set_callbacks({
         on_save_current = function()
             if not spell_core.is_blue_mage() then
-                ui.set_status('BLU not active -- switch to BLU on main or sub first.')
+                ui.set_status('BLU not equipped on either main or sub.')
                 return
             end
             -- Prefill the FFXI chat input with the command so the user just
@@ -322,7 +334,7 @@ local function initialize()
         on_equip_set = function(name)
             if not name then return end
             if not spell_core.is_blue_mage() then
-                ui.set_status('BLU not active -- switch to BLU on main or sub first.')
+                ui.set_status('BLU not equipped on either main or sub.')
                 return
             end
             -- Pre-equip cap check. REFUSE to equip when over cap -- FFXI
@@ -371,6 +383,15 @@ local function initialize()
             end
             refresh_ui_data()
         end,
+
+        on_clear_set = function(name)
+            -- Empty every slot of the saved set without removing the set
+            -- entry. Lets the user keep the name + start over on contents.
+            local ok, msg = spell_core.clear_set(name)
+            ui.set_status(msg or '')
+            windower.add_to_chat(ok and 207 or 167, 'FFXIAzureSets: '..(msg or ''))
+            refresh_ui_data()
+        end,
     })
 
     -- One-shot azureSets migration. Idempotent: the flag we persist after
@@ -391,10 +412,21 @@ local function initialize()
     initialized = true
 end
 
+local hotkey = require('libs/hotkey')
+
 windower.register_event('load', function()
+    local ok, msg = hotkey.bind('faset', 'toggle',
+        settings.hotkey_modifier, settings.hotkey_key)
+    if ok then
+        windower.add_to_chat(207, '[FFXIAzureSets] ' .. msg .. '. //faset hotkey <alt|ctrl|none|off> <key> to rebind.')
+    end
     if windower.ffxi.get_info() and windower.ffxi.get_info().logged_in then
         initialize()
     end
+end)
+
+windower.register_event('unload', function()
+    hotkey.unbind('faset')
 end)
 
 windower.register_event('login', function()
@@ -475,7 +507,7 @@ local function print_help()
         '  //faset setlist                  -- print saved set names to chat',
         '  //faset spelllist <name>         -- print one set\'s spells to chat',
         '  //faset setmode <ClearFirst|PreserveTraits>  -- default equip mode',
-        '  //faset setspeed <seconds>       -- delay between set packets (default 0.65)',
+        '  //faset setspeed <seconds>       -- delay between set packets (default 1.0; lower = faster but more retries)',
         '  //faset setbonus <0-25>          -- manual cap bonus above lvl base (0 = auto-detect)',
         '  //faset debugcap                 -- print cap breakdown (level base + merits + JP)',
         '  //faset import                   -- re-import from azureSets (overwrites same-named sets)',
@@ -502,6 +534,29 @@ windower.register_event('addon command', function(...)
 
     if cmd == 'help' or cmd == '?' then
         print_help()
+        return
+    end
+
+    if cmd == 'hotkey' or cmd == 'key' or cmd == 'rebind' then
+        if #args == 0 then
+            local cur = hotkey.display(settings.hotkey_modifier, settings.hotkey_key)
+            windower.add_to_chat(207, '[FFXIAzureSets] toggle hotkey = ' .. cur)
+            windower.add_to_chat(207, '  //faset hotkey <alt|ctrl|shift|none|off> <key>')
+            return
+        end
+        local mod, key, err = hotkey.parse_args(args[1], args[2])
+        if err then
+            windower.add_to_chat(167, '[FFXIAzureSets] ' .. err); return
+        end
+        local ok, msg = hotkey.bind('faset', 'toggle', mod, key)
+        if ok then
+            settings.hotkey_modifier = mod
+            settings.hotkey_key      = key
+            settings:save('all')
+            windower.add_to_chat(207, '[FFXIAzureSets] ' .. msg)
+        else
+            windower.add_to_chat(167, '[FFXIAzureSets] ' .. tostring(msg))
+        end
         return
     end
 

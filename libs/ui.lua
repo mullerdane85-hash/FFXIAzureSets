@@ -139,6 +139,11 @@ local state = {
         on_new_empty_set  = function() end,
         on_equip_set      = function(_name) end,
         on_delete_set     = function(_name) end,
+        -- Clear all spells from a saved set WITHOUT deleting the set
+        -- entry. Distinct from on_delete_set (which removes the set
+        -- record). User asked for this so they can keep the name +
+        -- start over on its contents.
+        on_clear_set      = function(_name) end,
         on_view_set       = function(_name) end,
         on_view_live      = function() end,
         on_assign_slot    = function(_name, _slot, _spell) end,
@@ -181,6 +186,7 @@ local elements = {
     btn_new_bg     = nil, btn_new_text     = nil,
     btn_equip_bg   = nil, btn_equip_text   = nil,
     btn_delete_bg  = nil, btn_delete_text  = nil,
+    btn_clear_bg   = nil, btn_clear_text   = nil,
 
     status_text = nil,
 
@@ -819,6 +825,11 @@ function ui.render()
     ensure_btn('btn_save_bg',   'btn_save_text',   'Save Current Spell Set')
     ensure_btn('btn_new_bg',    'btn_new_text',    'New Empty Set')
     ensure_btn('btn_equip_bg',  'btn_equip_text',  'Equip Spell Set')
+    -- Clear sits between Equip and Delete: it empties every slot of the
+    -- currently-selected set WITHOUT deleting the set entry itself, so the
+    -- user can keep the set name + start fresh on its contents. Distinct
+    -- from Delete (which removes the saved set entirely).
+    ensure_btn('btn_clear_bg',  'btn_clear_text',  'Clear Spell Set')
     ensure_btn('btn_delete_bg', 'btn_delete_text', 'Delete Spell Set')
     local function place_btn(field_bg, field_text, bx, color, label)
         local bg = elements[field_bg]
@@ -837,6 +848,12 @@ function ui.render()
     bx = bx + BTN_W + COL_GAP
     state.rects.btn_equip  = place_btn('btn_equip_bg',  'btn_equip_text',  bx,
         has_sel and C_BTN_INFO or C_BTN_DISABLED, 'Equip Spell Set')
+    bx = bx + BTN_W + COL_GAP
+    -- Clear sits between Equip and Delete (per user request) so the
+    -- destructive Delete button stays at the far right where it's harder
+    -- to misclick.
+    state.rects.btn_clear  = place_btn('btn_clear_bg',  'btn_clear_text',  bx,
+        has_sel and C_BTN_NEUTRAL or C_BTN_DISABLED, 'Clear Spell Set')
     bx = bx + BTN_W + COL_GAP
     state.rects.btn_delete = place_btn('btn_delete_bg', 'btn_delete_text', bx,
         has_sel and C_BTN_DANGER or C_BTN_DISABLED, 'Delete Spell Set')
@@ -1459,6 +1476,16 @@ function ui.handle_mouse(mtype, x, y)
         if inside(state.rects.btn_equip, x, y) then
             if state.selected_set_name then state.callbacks.on_equip_set(state.selected_set_name)
             else ui.set_status('Select a saved set first.') end
+            return true
+        end
+        if inside(state.rects.btn_clear, x, y) then
+            if state.selected_set_name then
+                local name = state.selected_set_name
+                ui.confirm("Clear all spells from '"..name.."'? (Set keeps its name.)",
+                    function() state.callbacks.on_clear_set(name) end)
+            else
+                ui.set_status('Select a saved set first.')
+            end
             return true
         end
         if inside(state.rects.btn_delete, x, y) then

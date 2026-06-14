@@ -48,6 +48,12 @@
 ]]
 
 local res     = require('resources')
+-- Pulled in for the equip-time set-points cap check. The trade NPC's
+-- accept-or-reject decision is server-side, but we know the cap formula
+-- (base cap by level + Assimilation merits if main + JP gifts if main),
+-- so we can pre-filter spells that would push over and skip them
+-- instead of letting the equip loop retry forever (60-iter cap).
+local traits  = require('libs/traits')
 
 local spell_core = {}
 
@@ -140,7 +146,7 @@ end
 
 -- Single-shot equip of one spell into one slot. Slot is 1-20.
 function spell_core.set_single_spell(spell_name, slot)
-    if not spell_core.is_blue_mage() then return false, 'BLU not active (main or sub).' end
+    if not spell_core.is_blue_mage() then return false, 'BLU not equipped on either main or sub.' end
     if not spell_name or not slot then return false, 'Missing args' end
 
     local id = spell_core.find_spell_id_by_name(spell_name)
@@ -191,6 +197,19 @@ function spell_core.set_equip_done_handler(fn) on_equip_done = fn end
 -- full-set swap (20 removes + 20 sets + cache-lag retries).
 local MAX_ITERATIONS = 60
 
+-- Per-spell attempt tracker for the current equip session. Keys are
+-- lowercased spell names; values are the number of set_blue_magic_spell
+-- calls we've made for that spell. After MAX_PER_SPELL_ATTEMPTS without
+-- the spell appearing in current_set, we give up on it -- handles both
+-- Windower cache lag (rare, resolves in 1-2 retries) AND silent server
+-- rejection (cost-calculation drift between our spell_point_cost table
+-- and the server's, unlearned-by-master-level conditions, etc.).
+--
+-- Reset by set_spells() at the start of each equip flow so an old
+-- failed-spell tag doesn't carry over to a fresh session.
+local _attempts = {}
+local MAX_PER_SPELL_ATTEMPTS = 3
+
 -- The body of this function is a direct port of azureSets's
 -- set_spells_from_spellset (Ricky Gall / Nitrous), preserving its exact
 -- loop+schedule strategy. No state-key stall detection -- that was
@@ -235,19 +254,87 @@ function spell_core._set_phase_step(spellset_name, set_phase, attempt)
 
     if empty_slot then
         local learned = (windower.ffxi.get_spells and windower.ffxi.get_spells()) or {}
+        -- Effective BLU level for level-requirement filtering. Computed
+        -- per-iteration so a job change mid-equip is picked up cleanly.
+        local p = windower.ffxi.get_player()
+        local effective_level = 0
+        if p and p.main_job_id == 16 then
+            effective_level = tonumber(p.main_job_level) or 0
+        elseif p and p.sub_job_id == 16 then
+            effective_level = tonumber(p.sub_job_level) or 0
+        end
+
+        -- Set-points budget. Sum costs of the spells already in current_set
+        -- so we can refuse any further spell that would push the running
+        -- total past the cap. The previous loop tried over-cap spells one
+        -- by one until the 60-iter safety net kicked in -- the screenshot
+        -- was 14 identical "set Cursed Sphere (id=544) -> slot 13" lines.
+        -- traits.spell_point_cost(name) is the same accounting the UI's
+        -- title-bar "X/Y pts" display uses; reusing it keeps equip and UI
+        -- in sync. On sub-BLU this picks up the (lower) sub-job cap so a
+        -- main-job-built set automatically trims to what fits on sub.
+        local max_pts = traits.max_cap_for_player(settings.bonus_set_points)
+        local cur_pts = 0
+        for _, name in pairs(current_set) do
+            if type(name) == 'string' then
+                cur_pts = cur_pts + (traits.spell_point_cost(name) or 0)
+            end
+        end
+
         for _, target_spell in pairs(target_set) do
-            if not current_set:contains(target_spell:lower()) then
+            local key = target_spell:lower()
+            -- Per-spell attempt cap. If we've already called
+            -- set_blue_magic_spell for this spell MAX_PER_SPELL_ATTEMPTS
+            -- times and it's STILL not in current_set, treat it as
+            -- silently rejected by the server and skip it on every
+            -- future iteration in this session. This stops the
+            -- "Awful Eye -> slot 12 [30/30 pts]" loop the user reported
+            -- without changing anything for spells that just need one
+            -- extra retry to clear Windower's stale cache.
+            if not current_set:contains(key)
+                and (_attempts[key] or 0) < MAX_PER_SPELL_ATTEMPTS
+            then
                 local id = spell_core.find_spell_id_by_name(target_spell)
-                if id and learned[id] then
-                    windower.add_to_chat(160, ('FFXIAzureSets dbg: set %s (id=%d) -> slot %d')
-                        :format(target_spell, id, empty_slot))
+                -- Level gate. Spells whose BLU learn-level (spell.levels[16])
+                -- exceeds the player's current effective BLU level can't be
+                -- slotted -- the server silently drops the set packet and
+                -- our schedule loop would retry forever against the iter
+                -- cap. Hide them here so we don't even try.
+                local spell_res = id and res.spells[id]
+                local lvl_req = spell_res and spell_res.levels and spell_res.levels[16]
+                local level_ok = lvl_req and lvl_req <= effective_level
+                -- Set-points gate. If this spell would push the budget past
+                -- the cap, skip it -- same reason as the level gate: server
+                -- rejects but current_set doesn't see the difference, so a
+                -- naive loop retries forever.
+                local cost = traits.spell_point_cost(target_spell) or 0
+                local pts_ok = (max_pts == 0) or (cur_pts + cost <= max_pts)
+                if id and learned[id] and level_ok and pts_ok then
+                    _attempts[key] = (_attempts[key] or 0) + 1
+                    local n = _attempts[key]
+                    local retry_tag = (n > 1) and (' [retry ' .. (n - 1) .. ']') or ''
+                    windower.add_to_chat(160, ('FFXIAzureSets dbg: set %s (id=%d, cost=%d) -> slot %d  [%d/%d pts]%s')
+                        :format(target_spell, id, cost, empty_slot, cur_pts + cost, max_pts, retry_tag))
                     windower.ffxi.set_blue_magic_spell(id, empty_slot)
                     spell_core._set_phase_step:schedule(settings.setspeed,
                         spellset_name, 'add', attempt)
                     return
                 elseif id and not learned[id] then
                     -- Skip unlearned -- chat-warned at set_spells entry
+                elseif id and learned[id] and not level_ok then
+                    -- Skip over-level -- chat-warned at set_spells entry.
+                elseif id and learned[id] and level_ok and not pts_ok then
+                    -- Skip over-cap -- chat-warned at set_spells entry.
                 end
+            elseif (_attempts[target_spell:lower()] or 0) >= MAX_PER_SPELL_ATTEMPTS
+                and not current_set:contains(key)
+                and not _attempts[key..':_warned']
+            then
+                -- One-shot warning per silently-rejected spell so the user
+                -- knows we gave up on it. Don't repeat each iteration.
+                _attempts[key..':_warned'] = true
+                windower.add_to_chat(167, ('FFXIAzureSets: %s rejected by server after %d attempts -- skipping. (cap mismatch, master level lock, or other gating.)')
+                    :format(target_spell, MAX_PER_SPELL_ATTEMPTS))
             end
         end
     end
@@ -264,23 +351,51 @@ end
 -- Returns (ok, message) so the UI can show success / a status line.
 function spell_core.set_spells(spellset_name, set_mode)
     if not spell_core.is_blue_mage() then
-        return false, 'BLU not active (main or sub).'
+        return false, 'BLU not equipped on either main or sub.'
     end
     if not settings.spellsets[spellset_name] then
         return false, 'Set not defined: '..tostring(spellset_name)
     end
+    -- Reset the per-spell attempt tracker so a previous failed equip's
+    -- "skip after 3 tries" tags don't leak into this fresh session.
+    _attempts = {}
     -- Pre-check: count how many spells in the saved set the player
-    -- hasn't learned. We don't refuse to equip (the equip loop already
-    -- skips them) but we DO chat-warn upfront so the user understands
-    -- why a 6-spell set might land only 4 spells on the bar.
+    -- hasn't learned OR is below the level for. We don't refuse to
+    -- equip (the equip loop already skips both cases) but we DO
+    -- chat-warn upfront so the user understands why a 6-spell set
+    -- might land only 4 spells on the bar.
     do
         local learned = (windower.ffxi.get_spells and windower.ffxi.get_spells()) or {}
-        local missing = {}
+        local p = windower.ffxi.get_player()
+        local effective_level = 0
+        if p and p.main_job_id == 16 then
+            effective_level = tonumber(p.main_job_level) or 0
+        elseif p and p.sub_job_id == 16 then
+            effective_level = tonumber(p.sub_job_level) or 0
+        end
+        local missing, over_level, over_cap = {}, {}, {}
+        -- Set-points budget for the upfront warning. Walks the saved set
+        -- in declaration order and reports anything that would push past
+        -- the cap (so the user sees "Cursed Sphere will be skipped" up
+        -- front instead of watching the equip loop fail silently).
+        local max_pts = traits.max_cap_for_player(settings.bonus_set_points)
+        local cur_pts = 0
         for _, spell in pairs(settings.spellsets[spellset_name]) do
             if type(spell) == 'string' then
                 local id = spell_core.find_spell_id_by_name(spell)
                 if id and not learned[id] then
                     missing[#missing + 1] = spell
+                elseif id and learned[id] then
+                    local spell_res = res.spells[id]
+                    local lvl_req = spell_res and spell_res.levels and spell_res.levels[16]
+                    local cost    = traits.spell_point_cost(spell) or 0
+                    if lvl_req and lvl_req > effective_level then
+                        over_level[#over_level + 1] = ('%s (lv%d)'):format(spell, lvl_req)
+                    elseif max_pts > 0 and cur_pts + cost > max_pts then
+                        over_cap[#over_cap + 1] = ('%s (%d pts)'):format(spell, cost)
+                    else
+                        cur_pts = cur_pts + cost
+                    end
                 end
             end
         end
@@ -288,6 +403,20 @@ function spell_core.set_spells(spellset_name, set_mode)
             windower.add_to_chat(167, ('FFXIAzureSets: %s has %d unlearned spell%s -- they will be skipped: %s')
                 :format(spellset_name, #missing, #missing == 1 and '' or 's',
                         table.concat(missing, ', ')))
+        end
+        if #over_level > 0 then
+            windower.add_to_chat(167, ('FFXIAzureSets: %s has %d spell%s above your current BLU level (%d) -- they will be skipped: %s')
+                :format(spellset_name, #over_level, #over_level == 1 and '' or 's',
+                        effective_level, table.concat(over_level, ', ')))
+        end
+        if #over_cap > 0 then
+            -- Common case is sub-BLU: a set built on main fits a 55-cap
+            -- budget; on sub the cap drops to ~30 and the tail of the
+            -- list overflows. We just report and skip; the set stays
+            -- savable as-is so re-subbing main puts everything back.
+            windower.add_to_chat(167, ('FFXIAzureSets: %s exceeds your %d-point cap by %d spell%s -- skipping: %s')
+                :format(spellset_name, max_pts, #over_cap, #over_cap == 1 and '' or 's',
+                        table.concat(over_cap, ', ')))
         end
     end
 
@@ -344,6 +473,22 @@ function spell_core.delete_set(setname)
     return true, "Deleted set '"..setname.."'."
 end
 
+-- Empty every slot of `setname` without removing the set entry. The
+-- saved set keeps its name + reappears as an empty 20-slot template
+-- the user can refill. Distinct from delete_set, which removes the
+-- record entirely.
+function spell_core.clear_set(setname)
+    if not settings.spellsets[setname] then
+        return false, "No set named '"..tostring(setname).."'."
+    end
+    -- Preserve the set object (so UI selection stays on it) and just
+    -- empty its slot keys. T{} keeps the upstream type assumptions.
+    local existing = settings.spellsets[setname]
+    for k in pairs(existing) do existing[k] = nil end
+    settings:save('all')
+    return true, "Cleared set '"..setname.."' (kept the name)."
+end
+
 -- List the names of saved sets, sorted alphabetically. 'default' (the empty
 -- sentinel) is excluded to match the original behavior.
 function spell_core.list_sets()
@@ -393,21 +538,52 @@ function spell_core.create_empty_set(setname)
     return true, "Created empty set '"..setname.."'."
 end
 
--- Return a sorted list of every LEARNED BLU spell name (English, Title-Case)
--- for the picker to render. No point showing spells the user hasn't learned --
--- they'd just be dead options that produce silent equip failures.
+-- Return a sorted list of BLU spell names (English, Title-Case) the
+-- player can currently EQUIP into a slot. Filters by two criteria:
 --
--- Windower's get_spells() returns a spell_id -> true map. Cross-referenced
--- with res.spells:type('BlueMagic') to drop non-BLU IDs and pick up the
--- canonical English name in one pass.
+--   1. Learned. get_spells() returns spell_id -> true; unlearned spells
+--      are dropped so the picker doesn't list dead options that produce
+--      silent equip failures.
+--
+--   2. Level requirement met by the player's CURRENT job setup. BLU on
+--      main: every spell up to main_job_level. BLU on sub: spells up to
+--      sub_job_level only (~half of main, capped at 49 normally, higher
+--      with Master Level on main). Anything above that gets dropped --
+--      previously the picker showed Level-80 spells while the user was
+--      /BLU at 38 and the server silently rejected the set packet,
+--      sending the equip loop into a retry storm against the iteration
+--      cap. Hiding them in the picker is the cleanest fix.
+--
+-- Off-job (no BLU at all): returns {} so the picker shows nothing
+-- equippable. Saved sets remain viewable in the main panel either way.
+local BLU_JOB_ID = 16
 function spell_core.list_all_blu_spells()
     local out = {}
     if not blu_spells then return out end
     local learned = (windower and windower.ffxi and windower.ffxi.get_spells
                      and windower.ffxi.get_spells()) or {}
+    local p = windower.ffxi.get_player()
+    -- Effective level for picker filtering. Mirrors traits.blu_level_for_cap
+    -- without the require -- spell_core doesn't otherwise depend on traits
+    -- and keeping the dependency one-way avoids a circular load.
+    local effective_level = 0
+    if p and p.main_job_id == BLU_JOB_ID then
+        effective_level = tonumber(p.main_job_level) or 0
+    elseif p and p.sub_job_id == BLU_JOB_ID then
+        effective_level = tonumber(p.sub_job_level) or 0
+    end
+    if effective_level <= 0 then return out end
+
     for spell in blu_spells:it() do
         if learned[spell.id] then
-            out[#out + 1] = spell.english
+            -- spell.levels is a job_id -> learn-level map. BLU learns
+            -- happen at spell.levels[16]. nil means "BLU can't learn
+            -- this" (shouldn't fire for entries from blu_spells, but
+            -- guard anyway), so treat as 99 to drop it from the list.
+            local lvl_req = spell.levels and spell.levels[BLU_JOB_ID]
+            if lvl_req and lvl_req <= effective_level then
+                out[#out + 1] = spell.english
+            end
         end
     end
     table.sort(out, function(a, b) return a:lower() < b:lower() end)
