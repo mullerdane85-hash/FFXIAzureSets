@@ -473,12 +473,10 @@ end
 -- cheap and reliable; chat_open covers the chat bar AND the macro-edit
 -- text field (both share the same input gate in retail FFXI). The
 -- mog_house / target_lock fields can stay nil safely.
-windower.register_event('keyboard', function(dik, pressed, flags, blocked)
-    if not pressed or blocked then return end
-    local info = windower.ffxi.get_info()
-    if info and info.chat_open then return end
-    if dik == resolve_hotkey() then ui.toggle() end
-end)
+-- Bare-key toggle disabled: a single letter ('Z') consumed the key and blocked
+-- in-game macros. The UI now toggles only on the modifier hotkey (default Alt+B;
+-- //faset hotkey <alt|ctrl|none|off> <key> to rebind). No keyboard handler is
+-- registered, so no bare keystroke is ever intercepted.
 
 -- =============================================================================
 -- Mouse routing

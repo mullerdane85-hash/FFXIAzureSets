@@ -2,10 +2,12 @@
 <settings>
     <global>
         <bonus_set_points>0</bonus_set_points>
+        <hotkey_key>b</hotkey_key>
+        <hotkey_modifier>alt</hotkey_modifier>
         <imported_from_azuresets>true</imported_from_azuresets>
         <pos>
-            <x>385</x>
-            <y>229</y>
+            <x>621</x>
+            <y>182</y>
         </pos>
         <setmode>PreserveTraits</setmode>
         <setspeed>0.65</setspeed>
@@ -14,7 +16,7 @@
 
             </default>
             <failtest>
-                <slot01>1000 Needles</slot01>
+                <slot01>Thrashing Assault</slot01>
                 <slot02>Absolute Terror</slot02>
                 <slot03>occultation</slot03>
                 <slot04>amorphic spikes</slot04>
@@ -56,8 +58,8 @@
                 <slot20>plasma charge</slot20>
             </magic>
             <phys>
-                <slot01>Regurgitation</slot01>
-                <slot02>Amorphic Spikes</slot02>
+                <slot01>Quad. Continuum</slot01>
+                <slot02>Thrashing Assault</slot02>
                 <slot03>barbed crescent</slot03>
                 <slot04>diffusion ray</slot04>
                 <slot05>nat. meditation</slot05>
@@ -66,16 +68,15 @@
                 <slot08>barrier tusk</slot08>
                 <slot09>sinker drill</slot09>
                 <slot10>occultation</slot10>
-                <slot11>subduction</slot11>
+                <slot11>Demoralizing Roar</slot11>
                 <slot12>heavy strike</slot12>
-                <slot13>battery charge</slot13>
-                <slot14>magic fruit</slot14>
+                <slot13>Molting Plumage</slot13>
                 <slot15>saline coat</slot15>
                 <slot16>erratic flutter</slot16>
                 <slot17>magic barrier</slot17>
                 <slot18>empty thrash</slot18>
                 <slot19>sickle slash</slot19>
-                <slot20>cocoon</slot20>
+                <slot20>Death Scissors</slot20>
             </phys>
             <phys2>
                 <slot01>dream flower</slot01>
@@ -122,8 +123,46 @@
                 <slot20>cocoon</slot20>
             </tank>
             <test>
-
+                <slot01>Blood Saber</slot01>
+                <slot02>Demoralizing Roar</slot02>
+                <slot03>Empty Thrash</slot03>
+                <slot04>Heavy Strike</slot04>
+                <slot05>Thrashing Assault</slot05>
+                <slot06>Barbed Crescent</slot06>
+                <slot07>Blazing Bound</slot07>
+                <slot08>Delta Thrust</slot08>
+                <slot09>Molting Plumage</slot09>
+                <slot10>Mortal Ray</slot10>
+                <slot11>Quad. Continuum</slot11>
+                <slot12>Diffusion Ray</slot12>
+                <slot13>Fantod</slot13>
+                <slot14>Sickle Slash</slot14>
             </test>
+            <test2>
+                <slot02>Foot Kick</slot02>
+                <slot03>Queasyshroom</slot03>
+                <slot04>Jet Stream</slot04>
+                <slot05>Sickle Slash</slot05>
+                <slot06>Jettatura</slot06>
+                <slot07>Cursed Sphere</slot07>
+                <slot08>Sprout Smack</slot08>
+                <slot09>Pollen</slot09>
+            </test2>
+            <test3>
+                <slot01>Wild Oats</slot01>
+                <slot02>Awful Eye</slot02>
+                <slot03>Geist Wall</slot03>
+                <slot04>Pollen</slot04>
+                <slot05>Helldive</slot05>
+                <slot06>Cursed Sphere</slot06>
+                <slot07>Power Attack</slot07>
+                <slot08>Queasyshroom</slot08>
+                <slot09>Sheep Song</slot09>
+                <slot10>Jettatura</slot10>
+                <slot11>Cocoon</slot11>
+                <slot12>Bomb Toss</slot12>
+                <slot13>Foot Kick</slot13>
+            </test3>
             <vw1>
                 <slot01>Firespit</slot01>
                 <slot02>Heat Breath</slot02>
@@ -160,33 +199,7 @@
                 <slot14>Eyes On Me</slot14>
                 <slot15>Sandspray</slot15>
             </vw2>
-            <warsub>
-                <slot01>Magic Fruit</slot01>
-                <slot02>Battery Charge</slot02>
-                <slot03>Occultation</slot03>
-                <slot04>Amorphic Spikes</slot04>
-                <slot05>Head Butt</slot05>
-                <slot06>Actinic Burst</slot06>
-                <slot07>Winds of Promy.</slot07>
-                <slot08>Empty Thrash</slot08>
-                <slot09>Heavy Strike</slot09>
-                <slot10>Acrid Stream</slot10>
-                <slot11>Demoralizing Roar</slot11>
-                <slot12>Quad. Continuum</slot12>
-                <slot13>Delta Thrust</slot13>
-                <slot14>Barbed Crescent</slot14>
-                <slot15>Blazing Bound</slot15>
-                <slot16>Animating Wail</slot16>
-                <slot17>Mortal Ray</slot17>
-                <slot18>Dream Flower</slot18>
-            </warsub>
         </spellsets>
         <toggle_key>Z</toggle_key>
     </global>
-    <kalitzo>
-        <pos>
-            <x>457</x>
-            <y>244</y>
-        </pos>
-    </kalitzo>
 </settings>
