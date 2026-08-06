@@ -14,9 +14,11 @@ This software is provided **AS IS, without warranty of any kind**, express or im
 
 ## 🔑 Hotkey
 
-**Default toggle: `Z`**
+**Default toggle: `Alt+B`**
 
-Press `Z` in-game to show or hide the window. Disabled while the chat bar or macro editor is open.
+Press `Alt+B` in-game (or `//faset`) to show or hide the window. Disabled while the chat bar or macro editor is open.
+
+> The old bare-`Z` toggle was removed: a single-letter hotkey consumed that keystroke game-wide and broke in-game macro/chat typing. The toggle is now modifier-based only — rebind it with `//faset hotkey <alt|ctrl> <key>`.
 
 **Rebind it any time:**
 
@@ -115,7 +117,7 @@ Mode is either:
 
 1. Put the `FFXIAzureSets` folder in `Windower/addons/`
 2. `//lua load FFXIAzureSets` (or add to your `init.txt`)
-3. Press `Z` (or your chosen hotkey) to open the panel
+3. Press `Alt+B` (or your chosen hotkey) to open the panel
 
 ## Migrating from azureSets
 

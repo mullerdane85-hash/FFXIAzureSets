@@ -530,6 +530,11 @@ windower.register_event('addon command', function(...)
 
     local cmd = table.remove(args, 1):lower()
 
+    if cmd == 'toggle' then          -- the Alt+B modifier hotkey sends '//faset toggle'
+        ui.toggle()
+        return
+    end
+
     if cmd == 'help' or cmd == '?' then
         print_help()
         return
